@@ -1,43 +1,57 @@
 #!/bin/bash
-set -e
+#set -e
+# PROXY="--insecure --proxy [my-proxy]:8080"
+JENKINSURL=https://updates.jenkins.io/
+BASEDIR=/var/www/html/jenkins-update
 
 # If no version requested get latest
 if [ "$1" == "" ];
 then
-  LATESTSTABLE=$(curl -f -L  https://updates.jenkins.io/stable/latestCore.txt | awk -F'.' '{print $1"."$2}')
+  LATESTSTABLE=$(curl ${PROXY} -f -L  ${JENKINSURL}/stable/latestCore.txt | awk -F'.' '{print $1"."$2}')
   VERSION="stable-${LATESTSTABLE}"
   echo "[ INFO  ] Latest stable version : ${VERSION}"
 else
   VERSION=$1
 fi
 
-JENKINSURL=https://updates.jenkins.io/
-BASEDIR=/home/klaas/Development/jenkins-update
-
-LOCALURL=https://jenkins-update.ontwikkel.local/${VERSION}/stable
+LOCALURL=https://[localhost.localdomain]/${VERSION}/stable
 WORKDIR=${BASEDIR}/${VERSION}
 DOWNLOADDIR=${BASEDIR}/${VERSION}/stable
 
 # Location where jq can be found
 # This file is downoadable from https://github.com/stedolan/jq
-JQ=/home/klaas/Development/jenkins-update/jq
+JQ=/usr/local/bin/jq
 
 ### functions ###
 
 function download_file() {
   # download file
-  curl -f -L "$1" --output "$2"  
-  # Calculate hash
-  CALCSHA256HASH=$( openssl dgst -binary -sha256 $2 | openssl base64 )
-  # See if hashes match
-  if [ "$3" == "${CALCSHA256HASH}" ];
-  then
-     echo "[ INFO  ] Download OK!" 
-  else
-     echo "[ ERROR ] Download $1 Failed!" 
-     echo "[ ERROR ] Download $1 Failed!" >> ${WORKDIR}/${VERSION}-failed-downloads.txt
-     
-  fi
+  ERROR=1
+  RETRYCOUNT=10
+
+  # Try to get file as long as ERRORLEVEL is not 0 or RETRYCOUNT not 0
+  while [ "${ERROR}" != 0 ] && [ "${RETRYCOUNT}" != 0 ]
+  do
+    echo "Trying to get: $1"
+    echo "Tries left   : ${RETRYCOUNT} of 10"
+    curl ${PROXY} -f -L "$1" --output "$2"
+    if [ "$?" -eq 0 ];
+    then
+      # Calculate hash
+      CALCSHA256HASH=$( openssl dgst -binary -sha256 $2 | openssl base64 )
+      # See if hashes match
+      if [ "$3" == "${CALCSHA256HASH}" ];
+      then
+         echo "[ INFO  ] Download OK!"
+         ERROR=0
+      else
+         echo "[ ERROR ] Download $1 Failed, sha256 hash does not match!"
+      fi
+    else
+      echo "[ ERROR ] Download $1 Failed, cURL has failed to compleet!"
+    fi
+    RETRYCOUNT=$((${RETRYCOUNT}-1))
+  done
 }
 
 
@@ -53,7 +67,7 @@ mkdir -p ${WORKDIR}
 for FILE in latestCore.txt update-center.json update-center.actual.json update-center.json.html
 do
   echo "[ INFO  ] Download ${FILE} from jenkins"
-  curl -f "${JENKINSURL}/${VERSION}/${FILE}" --output "${WORKDIR}/${FILE}"
+  curl ${PROXY} -f "${JENKINSURL}/${VERSION}/${FILE}" --output "${WORKDIR}/${FILE}"
   echo $?
 done
 
@@ -97,4 +111,3 @@ do
   done
   echo "[ INFO  ] ----- Analyzing section: ${SECTION} Done -----"
 done
-
